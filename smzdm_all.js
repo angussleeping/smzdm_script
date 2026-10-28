@@ -526,13 +526,13 @@ class SmzdmAllTaskBot extends SmzdmTaskBot {
     return content;
   }
 
-  // 解析任务要求的评论条数，如「发布3条评论」；解析不到按 1 条，上限 5
+  // 解析任务要求的评论条数，如「发布3条评论」；解析不到按 1 条，上限 10
   getCommentTaskCount(task) {
     const text = `${task.task_name || ''} ${task.task_description || ''}`;
     const match = text.match(/(\d+)\s*条/);
     const count = match ? parseInt(match[1], 10) : 1;
 
-    return Math.min(Math.max(count, 1), 5);
+    return Math.min(Math.max(count, 1), 10);
   }
 
   // 发一条评论并在计分后删除（发完即删不留评）
