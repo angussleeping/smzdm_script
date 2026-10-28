@@ -91,28 +91,10 @@ ql repo https://github.com/angussleeping/smzdm_script.git "smzdm_all" "" "env.js
 * `SMZDM_CROWD_KEYWORD`: 抽奖关键词，执行非免费抽奖时，会优先选择包含此关键词的抽奖，如果未找到包含此关键词的抽奖，则会随机选择一个。
 * `SMZDM_TASK_TESTING`: 是否运行全民众测能量值任务，如要运行此任务，请设置这个环境变量的值为 `yes`，否则不运行。
 
-模块开关（默认签到、抽奖、任务三个模块开启，众测默认关闭）：
-
-* `SMZDM_RUN_CHECKIN`: 设为 `no` 关闭每日签到模块
-* `SMZDM_RUN_LOTTERY`: 设为 `no` 关闭每日抽奖模块
-* `SMZDM_RUN_TASK`: 设为 `no` 关闭每日任务模块
-
 ### 已知限制
 
 * 发布笔记（`publish.biji_new`）、发布原创长文（`publish.yuanchuang_new`）、申请众测（`guide.apply_zhongce`）等任务需要人工创作或申请，脚本会跳过并在日志中提示
 * 转盘抽奖活动由官方运营，活动过期时日志提示「活动已过期」属正常现象
-
-## 交流群
-
-https://t.me/smzdm_script
-
-## 推荐🐔场
-
-自用🐔场，稳定，线路多，速度快，[点这里注册](https://xs-us.xyz/register?code=GMsubu2k)
-
-## 其他🐑毛
-
-微软积分商城奖励，[点这里注册](https://rewards.bing.com/welcome?rh=15761308&ref=rafsrchae)，脚本看[这里](https://github.com/hex-ci/Microsoft-Rewards-Script)
 
 ## 其它说明
 
