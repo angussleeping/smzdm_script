@@ -581,20 +581,21 @@ class SmzdmAllTaskBot extends SmzdmTaskBot {
       };
     }
 
-    // 打乱后逐篇取用，保证每条评论落在不同文章上
+    // 打乱后逐篇取用，保证每条评论落在不同文章上；
+    // 解析到的条数只是底线，任务实际要求可能更多（如「评论赢限定勋章」），领奖失败时继续补发
     const pool = this.getShuffled(articles);
+    const MAX_COMMENTS = 15;
     let done = 0;
+    let text = content;
 
-    for (let i = 0; i < need && i < pool.length; i++) {
-      // 第一条用 doTasks 传入的文案，其余循环取新文案
-      const text = i === 0 ? content : this.getCommentContent();
-
+    while (done < need && done < pool.length && done < MAX_COMMENTS) {
       if (!text) {
         break;
       }
 
-      if (await this.postOneComment(pool[i], text)) {
+      if (await this.postOneComment(pool[done], text)) {
         done++;
+        text = this.getCommentContent();
       }
       else {
         // 提交被拒（如内容重复），不硬重试
@@ -602,14 +603,39 @@ class SmzdmAllTaskBot extends SmzdmTaskBot {
       }
     }
 
-    if (done < need) {
-      this.$env.log(`该任务需要评论 ${need} 条，本次完成 ${done} 条，建议在 SMZDM_COMMENT 配置更多不同文案`);
-    }
-
     this.$env.log('领取奖励');
     await waitHuman(5, 15);
 
-    return await this.receiveReward(task.task_id);
+    let result = await this.receiveReward(task.task_id);
+
+    // 领奖失败说明实际要求的条数比解析到的多，自动补齐：继续发评论直到领奖成功
+    while (!result.isSuccess && done < pool.length && done < MAX_COMMENTS) {
+      this.$env.log(`任务还差评论（已发 ${done} 条），继续补发`);
+
+      text = this.getCommentContent();
+
+      if (!text) {
+        break;
+      }
+
+      if (await this.postOneComment(pool[done], text)) {
+        done++;
+
+        await waitHuman(5, 15);
+        this.$env.log('再次领取奖励');
+
+        result = await this.receiveReward(task.task_id);
+      }
+      else {
+        break;
+      }
+    }
+
+    if (!result.isSuccess) {
+      this.$env.log(`本次共发 ${done} 条评论仍未达到任务要求，建议在 SMZDM_COMMENT 配置更多不同文案`);
+    }
+
+    return result;
   }
 }
 
