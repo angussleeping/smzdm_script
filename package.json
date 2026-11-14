@@ -1,6 +1,6 @@
 {
   "name": "smzdm-script",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "smzdm 自用脚本 for 青龙面板，支持 App 端签到、转盘抽奖、每日任务等功能",
   "main": "smzdm_checkin.js",
   "scripts": {
@@ -20,6 +20,7 @@
     "eslint": "^8.36.0"
   },
   "dependencies": {
-    "crypto-js": "^4.1.1"
+    "crypto-js": "^4.1.1",
+    "got": "^11.8.6"
   }
 }

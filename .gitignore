@@ -72,3 +72,6 @@ build/*.json
 package-lock.json
 
 .vscode/
+
+# 评论安全策略的运行时状态（各面板本地生成，不要提交）
+.smzdm_comment_state.json

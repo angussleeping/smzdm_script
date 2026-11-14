@@ -5,6 +5,7 @@ const {
   wait,
   waitHuman
 } = require('./bot');
+const { CommentPolicy } = require('./library_comment');
 
 // ------------------------------------
 
@@ -125,19 +126,19 @@ class SmzdmTaskBot extends SmzdmBot {
 
           await waitHuman(5, 15);
         }
-        // 评论任务
+        // 评论任务（安全模式，见 library_comment.js）
         else if (task.task_event_type == 'interactive.comment') {
-          const comment = this.getCommentContent();
+          const { isSuccess, skipped, reason } = await this.doCommentTask(task);
 
-          if (comment) {
-            const { isSuccess } = await this.doCommentTask(task, comment);
+          if (skipped) {
+            notifyMsg += `🟡[${task.task_name}]评论任务已跳过：${reason}\n`;
 
+            this.$env.log(`🟡跳过[${task.task_name}]任务：${reason}`);
+          }
+          else {
             notifyMsg += this.getTaskNotifyMessage(isSuccess, task);
 
             await waitHuman(5, 15);
-          }
-          else {
-            this.$env.log(`🟡跳过[${task.task_name}]任务：请设置 SMZDM_COMMENT 环境变量后才能做评论任务！`);
           }
         }
         // 站外浏览任务
@@ -196,19 +197,65 @@ class SmzdmTaskBot extends SmzdmBot {
     return (task.task_redirect_url && task.task_redirect_url.hashcode) || '';
   }
 
-  // 随机取一条评论文案，多条时用换行或 | 分隔
-  getCommentContent() {
-    const words = String(process.env.SMZDM_COMMENT || '')
-      .split(/[\n|]/)
-      .map(word => word.trim())
-      .filter(word => word.length > 10);
+  // 解析任务要求的评论条数，如「发布3条评论」；解析不到按 1 条
+  // 不做上限截断，条数只用于判断是否跳过，日志里的数字要和任务描述一致
+  getCommentTaskCount(task) {
+    const text = `${task.task_name || ''} ${task.task_description || ''}`;
+    const match = text.match(/(\d+)\s*条/);
+    const count = match ? parseInt(match[1], 10) : 1;
 
-    return words.length > 0 ? this.getOneByRandom(words) : '';
+    return Math.max(count, 1);
   }
 
-  // 执行评论任务
-  async doCommentTask(task, content) {
+  // 接口层面识别评论权限受限，命中后应停止本次所有评论动作
+  isCommentBlocked(response) {
+    return /禁言|封禁|禁止评论|评论权限|无权限|没有权限|操作频繁|操作太快|账号异常|违规/i.test(String(response));
+  }
+
+  // 执行评论任务（安全模式）
+  //
+  // 历史实现的问题：发表后 20-30 秒即删除、为「发布 N 条评论」任务循环补发到 15 条、
+  // 文案重复时追加句号生成变体。三者叠加是账号被永久封禁评论的直接原因，详见 library_comment.js。
+  // 现在改为默认不做、每日限量、发表后保留，宁可完不成任务也不重复高危行为。
+  async doCommentTask(task) {
     this.$env.log(`开始任务: ${task.task_name}`);
+
+    if (!CommentPolicy.enabled) {
+      return {
+        isSuccess: false,
+        skipped: true,
+        reason: '评论任务默认关闭，需要设置 SMZDM_COMMENT_ENABLE=yes 并配置 SMZDM_COMMENT 才会执行'
+      };
+    }
+
+    const need = this.getCommentTaskCount(task);
+
+    // 一次任务里连发多条是最强的灌水特征，这类任务交给人工
+    if (need > CommentPolicy.maxPerRun) {
+      return {
+        isSuccess: false,
+        skipped: true,
+        reason: `任务要求 ${need} 条评论，脚本不再自动连发，请在 APP 内手动完成`
+      };
+    }
+
+    const policy = new CommentPolicy(this.cookie, (msg) => this.$env.log(msg));
+
+    if (policy.remaining < 1) {
+      return {
+        isSuccess: false,
+        skipped: true,
+        reason: `今日评论额度已用完（上限 ${CommentPolicy.dailyLimit} 条）`
+      };
+    }
+
+    if (policy.waitMs > 0) {
+      return {
+        isSuccess: false,
+        skipped: true,
+        reason: `距上一条评论不足 ${Math.round(CommentPolicy.minGapMs / 60000)} 分钟，本次不发表`
+      };
+    }
 
     const articles = await this.getArticleList(20);
 
@@ -218,38 +265,59 @@ class SmzdmTaskBot extends SmzdmBot {
       };
     }
 
-    // 随机选一篇文章来评论
+    // 随机选一篇文章，不按固定顺序取，避免每次都落在同一篇上
     const article = articles[Math.floor(Math.random() * articles.length)];
 
-    // 先打开文章
-    await this.getArticleDetail(article.article_id);
+    const detail = await this.getArticleDetail(article.article_id);
 
-    await wait(3, 10);
-
-    const {isSuccess, data } = await this.submitComment({
-      articleId: article.article_id,
-      channelId: article.article_channel_id,
-      content
-    });
-
-    if (!isSuccess) {
+    if (detail === false) {
       return {
-        isSuccess
+        isSuccess: false
       };
     }
 
-    this.$env.log('删除评论');
-    await wait(20, 30);
+    // 真实停留：打开就评论是最容易被识别的模式，这里按任务要求的浏览时长或默认 25 秒先读一会儿
+    const taskSeconds = parseInt(task.view_seconds) || 0;
+    const seconds = taskSeconds > 0 ? taskSeconds : CommentPolicy.readSeconds();
 
-    const {isSuccess: result } = await this.removeComment(data.data.comment_ID);
+    this.$env.log(`阅读文章 ${seconds} 秒后再评论`);
+    await wait(seconds, seconds + 15);
 
-    if (!result) {
-      this.$env.log('再试一次');
-      await wait(10, 20);
+    const picked = policy.pickContent(detail);
 
-      // 不成功再执行一次删除
-      await this.removeComment(data.data.comment_ID);
+    if (!picked) {
+      return {
+        isSuccess: false,
+        skipped: true,
+        reason: 'SMZDM_COMMENT 中的文案近期都已用过，请补充新的文案（脚本不再通过拼接变体复用旧文案）'
+      };
     }
+
+    const { isSuccess, data, response } = await this.submitComment({
+      articleId: article.article_id,
+      channelId: article.article_channel_id,
+      content: picked.content
+    });
+
+    if (!isSuccess) {
+      if (this.isCommentBlocked(response)) {
+        return {
+          isSuccess: false,
+          skipped: true,
+          reason: '接口提示评论权限受限，已停止本次评论，请到 APP 内确认账号状态'
+        };
+      }
+
+      return {
+        isSuccess: false
+      };
+    }
+
+    // 发表后保留评论。删除行为（尤其是发表后几十秒内删除）本身是风控重点指标，
+    // 删不删服务端都有完整记录，保留反而更接近真实使用。
+    policy.record(picked.key);
+
+    this.$env.log(`评论已保留（comment_ID: ${data.data.comment_ID}），不再自动删除`);
 
     this.$env.log('领取奖励');
     await waitHuman(5, 15);
@@ -1625,6 +1693,9 @@ class SmzdmTaskBot extends SmzdmBot {
   }
 
   // 删除评论
+  //
+  // 仅供人工排障使用，评论任务流程已不再调用。历史上「发表后立刻删除」是账号被判定灌水的
+  // 直接特征之一（删除行为在服务端同样留痕），不要把它重新接回 doCommentTask。
   async removeComment(id) {
     const { isSuccess, response } = await requestApi('https://comment-api.smzdm.com/comments/delete_comment', {
       method: 'post',
